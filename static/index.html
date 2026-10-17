@@ -57,6 +57,21 @@
   .key-row label { font-weight:600; font-size:14px; }
   .key-row input { width:100%; font-family:ui-monospace, Consolas, monospace; }
   .dialog-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+  /* 지도 ↔ 리스트 연동 */
+  #tbl tbody tr[data-id] { cursor:pointer; }
+  #tbl tbody tr[data-id]:hover td { background:#fafaf9; }
+  #tbl tbody tr.selected td, #tbl tbody tr.selected:hover td { background:#fff1e6; transition:background .4s; }
+  #tbl tbody tr.selected td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
+  .map-tip { pointer-events:none; padding-bottom:48px; }  /* 마커 높이만큼 띄워 마커를 가리지 않게 */
+  .map-tip .card { position:relative; width:290px; background:#fff; border:1px solid #d6d3d1; border-radius:10px;
+    box-shadow:0 6px 18px rgba(0,0,0,.18); padding:12px 14px; font-size:13px; line-height:1.5; color:var(--text); }
+  .map-tip .card::after { content:""; position:absolute; left:50%; bottom:-8px; margin-left:-8px; width:14px; height:14px;
+    background:#fff; border-right:1px solid #d6d3d1; border-bottom:1px solid #d6d3d1; transform:rotate(45deg); }
+  .map-tip .name { font-size:15px; font-weight:700; margin-bottom:2px; }
+  .map-tip .cat { color:var(--muted); font-size:12px; font-weight:400; margin-left:4px; }
+  .map-tip .phone { color:var(--ok); }
+  .map-tip .travel { margin-top:6px; padding-top:6px; border-top:1px solid var(--line); }
+  .map-tip .hint { color:var(--muted); font-size:11px; margin-top:4px; }
 </style>
 </head>
 <body>
@@ -126,7 +141,7 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-let map = null, markers = [], lastData = null;
+let map = null, lastData = null;
 
 async function loadConfig() {
   const cfg = await (await fetch("/api/config")).json();
@@ -140,7 +155,11 @@ async function loadConfig() {
   if (cfg.kakao_js_key) {
     const s = document.createElement("script");
     s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(cfg.kakao_js_key)}&autoload=false`;
-    s.onload = () => kakao.maps.load(() => { $("#map").style.display = "block"; map = new kakao.maps.Map($("#map"), { center: new kakao.maps.LatLng(37.5665, 126.978), level: 5 }); });
+    s.onload = () => kakao.maps.load(() => {
+      $("#map").style.display = "block";
+      map = new kakao.maps.Map($("#map"), { center: new kakao.maps.LatLng(37.5665, 126.978), level: 5 });
+      initMapLayer();
+    });
     document.head.appendChild(s);
   }
 }
@@ -179,15 +198,129 @@ document.addEventListener("click", (e) => {
   if (btn) showExactRoute(btn);
 });
 
+// ── 지도 ↔ 리스트 연동 ─────────────────────────────────────────────
+const svgUri = (svg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+const PIN = (fill, w, h) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 32 42"><path d="M16 1C7.7 1 1 7.6 1 15.7 1 26.6 16 41 16 41s15-14.4 15-25.3C31 7.6 24.3 1 16 1z" fill="${fill}" stroke="#fff" stroke-width="2"/><circle cx="16" cy="15.5" r="5.5" fill="#fff"/></svg>`;
+const ORIGIN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="46" height="46"><circle cx="23" cy="23" r="21" fill="#1c1917" stroke="#fff" stroke-width="3"/><text x="23" y="28.5" font-size="14" font-weight="700" text-anchor="middle" fill="#fff" font-family="Malgun Gothic, sans-serif">출발</text></svg>`;
+
+const itemsById = new Map();
+const markersById = new Map();
+let selectedId = null, pinnedId = null, originMarker = null, tipOverlay = null, imgBlue, imgOrange, imgOrigin;
+
+function initMapLayer() {
+  const image = (svg, w, h, ox, oy) => new kakao.maps.MarkerImage(svgUri(svg), new kakao.maps.Size(w, h), { offset: new kakao.maps.Point(ox, oy) });
+  imgBlue = image(PIN("#2563eb", 26, 34), 26, 34, 13, 34);
+  imgOrange = image(PIN("#ea580c", 34, 44), 34, 44, 17, 44);
+  imgOrigin = image(ORIGIN_SVG, 46, 46, 23, 23);
+  tipOverlay = new kakao.maps.CustomOverlay({ xAnchor: 0.5, yAnchor: 1, zIndex: 300 });
+}
+
+function clearMapLayer() {
+  itemsById.clear();
+  selectedId = pinnedId = null;
+  markersById.forEach((m) => m.setMap(null));
+  markersById.clear();
+  if (originMarker) { originMarker.setMap(null); originMarker = null; }
+  if (tipOverlay) tipOverlay.setMap(null);
+}
+
+const rowFor = (id) => $("#tbl tbody").querySelector(`tr[data-id="${CSS.escape(id)}"]`);
+
+function tipHtml(p, mode) {
+  const t = p.transit;
+  const travel = mode === "walk"
+    ? `도보 약 <b>${p.walk.minutes}분</b>${p.walk.estimated ? " (추정)" : ""} · ${p.distance_m.toLocaleString()}m`
+    : t && t.summary
+      ? `약 <b>${t.minutes}분</b> (추정) · ${esc(t.summary)}`
+      : `도보 약 <b>${p.walk.minutes}분</b> · ${p.distance_m.toLocaleString()}m`;
+  return `<div class="card">
+    <div class="name">${esc(p.name)}<span class="cat">${esc(p.category)}</span></div>
+    <div>${esc(p.road_address || p.address)}</div>
+    ${p.road_address && p.address ? `<div class="sub">(지번) ${esc(p.address)}</div>` : ""}
+    ${p.phone ? `<div class="phone">${esc(p.phone)}</div>` : ""}
+    <div class="travel">${travel}</div>
+    <div class="hint">별점·리뷰·사진은 클릭 후 '카카오맵에서 보기'에서 확인하세요.</div>
+  </div>`;
+}
+
+function showTip(id) {
+  const p = itemsById.get(id), m = markersById.get(id);
+  if (!p || !m || !tipOverlay) return;
+  const el = document.createElement("div");
+  el.className = "map-tip";
+  el.style.paddingBottom = (id === selectedId ? 50 : 40) + "px";
+  el.innerHTML = tipHtml(p, lastData.mode);
+  tipOverlay.setContent(el);
+  tipOverlay.setPosition(m.getPosition());
+  tipOverlay.setMap(map);
+}
+
+function hideTip() {
+  if (!tipOverlay) return;
+  if (pinnedId && markersById.has(pinnedId)) showTip(pinnedId);  // 리스트에서 고른 가게의 툴팁은 유지
+  else tipOverlay.setMap(null);
+}
+
+function setSelectedVisual(id, on) {
+  rowFor(id)?.classList.toggle("selected", on);
+  const m = markersById.get(id);
+  if (m) { m.setImage(on ? imgOrange : imgBlue); m.setZIndex(on ? 100 : 1); }
+}
+
+function selectPlace(id, source) {
+  if (selectedId && selectedId !== id) setSelectedVisual(selectedId, false);
+  selectedId = id;
+  pinnedId = source === "row" ? id : null;
+  setSelectedVisual(id, true);
+  if (!tipOverlay) {  // 지도가 없는 경우(카카오 JavaScript 키 없음)에는 리스트 강조만
+    if (source === "map") return;
+  }
+  if (source === "map") {
+    rowFor(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } else if (map && markersById.has(id)) {
+    map.panTo(markersById.get(id).getPosition());
+    showTip(id);
+    const r = $("#map").getBoundingClientRect();
+    if (r.bottom < 80 || r.top > innerHeight - 80) $("#map").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function addMarker(p) {
+  const m = new kakao.maps.Marker({ map, position: new kakao.maps.LatLng(p.lat, p.lng), image: imgBlue, title: "", zIndex: 1 });
+  kakao.maps.event.addListener(m, "click", () => selectPlace(p.id, "map"));
+  kakao.maps.event.addListener(m, "mouseover", () => showTip(p.id));
+  kakao.maps.event.addListener(m, "mouseout", hideTip);
+  markersById.set(p.id, m);
+}
+
+function setOriginMarker(center) {
+  const pos = new kakao.maps.LatLng(center.lat, center.lng);
+  originMarker = new kakao.maps.Marker({ map, position: pos, image: imgOrigin, zIndex: 50 });
+  kakao.maps.event.addListener(originMarker, "mouseover", () => {
+    const el = document.createElement("div");
+    el.className = "map-tip";
+    el.style.paddingBottom = "30px";
+    el.innerHTML = `<div class="card"><div class="name">출발지</div><div>${esc(center.name)}</div></div>`;
+    tipOverlay.setContent(el); tipOverlay.setPosition(pos); tipOverlay.setMap(map);
+  });
+  kakao.maps.event.addListener(originMarker, "mouseout", hideTip);
+}
+
+$("#tbl tbody").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr || e.target.closest("a, button")) return;  // 링크·'정확한 경로' 버튼은 원래 동작대로
+  selectPlace(tr.dataset.id, "row");
+});
+
 function render(data, append = false) {
   if (append) {
     lastData.items = lastData.items.concat(data.items);
   } else {
     lastData = data;
     $("#tbl tbody").innerHTML = "";
-    markers.forEach((m) => m.setMap(null));
-    markers = [];
+    clearMapLayer();
   }
+  data.items.forEach((p) => itemsById.set(p.id, p));
   const shown = lastData.items.length;
   $("#notes").innerHTML = data.notes.map((n) => `<li>${esc(n)}</li>`).join("");
   const filtered = data.count < data.total ? ` (전체 ${data.total.toLocaleString()}곳 중 필터 결과 ${data.count.toLocaleString()}곳)` : ` · ${data.total.toLocaleString()}곳`;
@@ -196,7 +329,7 @@ function render(data, append = false) {
   if (!append) renderFacets(data.facets);
   $("#tbl").hidden = false;
   $("#tbl tbody").insertAdjacentHTML("beforeend", data.items.map((p) => `
-    <tr>
+    <tr data-id="${esc(p.id)}">
       <td><a href="${esc(p.kakao_url)}" target="_blank" rel="noopener">${esc(p.name)}</a>
           <div class="sub">${esc(p.road_address || p.address)}${p.phone ? " · " + esc(p.phone) : ""}</div>
           <span class="area-tag">${esc(p.area)}</span></td>
@@ -207,12 +340,14 @@ function render(data, append = false) {
     </tr>`).join(""));
 
   if (map) {
-    const center = new kakao.maps.LatLng(data.center.lat, data.center.lng);
-    const bounds = new kakao.maps.LatLngBounds();
-    bounds.extend(center);
-    markers = markers.concat(data.items.map((p) => new kakao.maps.Marker({ map, position: new kakao.maps.LatLng(p.lat, p.lng), title: p.name })));
-    lastData.items.forEach((p) => bounds.extend(new kakao.maps.LatLng(p.lat, p.lng)));
-    if (lastData.items.length) map.setBounds(bounds); else map.setCenter(center);
+    if (!append) setOriginMarker(data.center);
+    data.items.forEach(addMarker);
+    if (!append) {  // '더 보기'로 이어 붙일 때는 사용자가 보던 지도 위치를 바꾸지 않는다
+      const bounds = new kakao.maps.LatLngBounds();
+      bounds.extend(new kakao.maps.LatLng(data.center.lat, data.center.lng));
+      lastData.items.forEach((p) => bounds.extend(new kakao.maps.LatLng(p.lat, p.lng)));
+      if (lastData.items.length) map.setBounds(bounds); else map.setCenter(new kakao.maps.LatLng(data.center.lat, data.center.lng));
+    }
   }
 }
 

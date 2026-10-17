@@ -3,7 +3,7 @@ import time
 
 import httpx
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 # GitHub 저장소 "소유자/이름". 비워 두면 새 버전 확인을 하지 않는다.
 GITHUB_REPO = "JH0111/matjip-finder"
 
