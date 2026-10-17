@@ -5,7 +5,7 @@ import httpx
 
 VERSION = "0.1.0"
 # GitHub 저장소 "소유자/이름". 비워 두면 새 버전 확인을 하지 않는다.
-GITHUB_REPO = ""
+GITHUB_REPO = "JH0111/matjip-finder"
 
 _CHECK_INTERVAL = 6 * 3600
 _last = {"at": 0.0, "result": None}
