@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>맛집 반경 검색</title>
+<style>
+  :root { --bg:#fafaf9; --card:#fff; --text:#1c1917; --muted:#78716c; --line:#e7e5e4; --accent:#ea580c; --ok:#15803d; --bad:#b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Malgun Gothic", sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  form { display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  input, select, button { font: inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  input[name=q] { flex: 1 1 240px; }
+  input[name=minutes] { width: 80px; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .sources { margin:10px 0; font-size:13px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; }
+  .sources span.on { color:var(--ok); } .sources span.off { color:var(--bad); }
+  .notes { font-size:13px; color:var(--muted); margin:8px 0; padding-left:18px; }
+  #map { height: 360px; border-radius:10px; border:1px solid var(--line); margin:12px 0; display:none; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:14px; }
+  th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { background:#f5f5f4; font-weight:600; white-space:nowrap; }
+  td.num { white-space:nowrap; }
+  #tbl td:first-child { min-width:200px; }
+  #tbl td:nth-child(2) { min-width:90px; }
+  #tbl td:nth-child(4) { min-width:220px; white-space:normal; }
+  .est { color:var(--muted); font-size:12px; }
+  .closed { color:var(--bad); font-weight:600; }
+  .open { color:var(--ok); }
+  .sub { color:var(--muted); font-size:12px; }
+  a { color:var(--accent); }
+  .table-wrap { overflow-x:auto; }
+  .route-btn { padding:2px 8px; font-size:12px; background:#fff; color:var(--accent); border-color:var(--accent); margin-top:4px; }
+  .route-out { margin-top:4px; max-width:320px; }
+  .filters { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:12px 0; display:grid; gap:8px; }
+  .filters .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .filters .label { font-size:13px; font-weight:600; min-width:56px; }
+  .chip { padding:4px 10px; font-size:13px; border-radius:999px; background:#fff; color:var(--text); border:1px solid var(--line); cursor:pointer; }
+  .chip.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .chip .n { color:var(--muted); font-size:11px; margin-left:3px; }
+  .chip.on .n { color:#ffedd5; }
+  .chip.link { border:none; color:var(--accent); background:none; }
+  .area-tag { display:inline-block; font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:0 5px; margin-top:2px; }
+  header { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  header h1 { margin:0; }
+  header .ver { color:var(--muted); font-size:12px; }
+  header .spacer { flex:1; }
+  .ghost { background:#fff; color:var(--accent); }
+  .banner { background:#fff7ed; border:1px solid #fed7aa; border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:14px; }
+  dialog { border:1px solid var(--line); border-radius:12px; padding:20px; width:min(560px, calc(100vw - 32px)); }
+  dialog::backdrop { background:rgba(0,0,0,.35); }
+  dialog h2 { margin:0 0 4px; font-size:18px; }
+  .key-row { display:grid; gap:4px; margin:12px 0; }
+  .key-row label { font-weight:600; font-size:14px; }
+  .key-row input { width:100%; font-family:ui-monospace, Consolas, monospace; }
+  .dialog-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>맛집 반경 검색</h1><span class="ver" id="ver"></span>
+    <span class="spacer"></span>
+    <button type="button" class="ghost" id="open-settings">API 키 설정</button>
+  </header>
+  <div class="banner" id="update-banner" hidden></div>
+  <div class="banner" id="subway-banner" hidden>
+    대중교통 검색에 쓰는 <b>지하철 노선망</b>이 아직 없습니다. 카카오 키로 역 좌표를 찾아 한 번만 만들면 됩니다(약 1분).
+    <button type="button" id="build-subway">지하철 노선망 만들기</button> <span id="build-status" class="sub"></span>
+  </div>
+  <dialog id="settings">
+    <form method="dialog" id="settings-form">
+      <h2>API 키 설정</h2>
+      <div class="sub">키는 이 PC의 <code id="user-dir"></code> 안 <code>.env</code> 파일에만 저장됩니다. 빈 칸은 기존 값을 유지합니다.</div>
+      <div class="key-row"><label>카카오 REST API 키 <span class="sub">(필수 · 장소 검색)</span></label>
+        <input type="password" name="KAKAO_REST_API_KEY" autocomplete="off"><span class="sub" data-hint="KAKAO_REST_API_KEY"></span></div>
+      <div class="key-row"><label>카카오 JavaScript 키 <span class="sub">(선택 · 지도 표시, 플랫폼에 http://localhost:8000 등록)</span></label>
+        <input type="password" name="KAKAO_JS_KEY" autocomplete="off"><span class="sub" data-hint="KAKAO_JS_KEY"></span></div>
+      <div class="key-row"><label>TMAP 앱 키 <span class="sub">(선택 · 실제 도보 시간)</span></label>
+        <input type="password" name="TMAP_APP_KEY" autocomplete="off"><span class="sub" data-hint="TMAP_APP_KEY"></span></div>
+      <div class="key-row"><label>ODsay API 키 <span class="sub">(선택 · 정확한 대중교통 경로, Server IP 등록 필요)</span></label>
+        <input type="password" name="ODSAY_API_KEY" autocomplete="off"><span class="sub" data-hint="ODSAY_API_KEY"></span></div>
+      <div class="sub">발급 방법은 README의 'API 키 발급'을 참고하세요.</div>
+      <div class="dialog-actions">
+        <button type="button" class="ghost" id="close-settings">닫기</button>
+        <button type="button" id="save-settings">저장</button>
+      </div>
+    </form>
+  </dialog>
+  <form id="f">
+    <input name="q" placeholder="기준 위치 (예: 강남역, 서울 중구 세종대로 110)" required>
+    <select name="mode">
+      <option value="walk">도보</option>
+      <option value="transit">대중교통</option>
+    </select>
+    <input name="minutes" type="number" min="1" max="90" value="15"> 분 이내
+    <button id="go">검색</button>
+  </form>
+  <div class="sources" id="sources"></div>
+  <ul class="notes" id="notes"></ul>
+  <div id="map"></div>
+  <div class="filters" id="filters" hidden>
+    <div class="row"><span class="label">정렬</span>
+      <select id="sort" autocomplete="off">
+        <option value="spread">지역 골고루</option>
+        <option value="time">소요시간순</option>
+        <option value="distance">거리순</option>
+      </select>
+      <button type="button" class="chip link" id="reset-filters">필터 초기화</button>
+    </div>
+    <div class="row" id="cat-chips"><span class="label">종류</span></div>
+    <div class="row" id="area-chips"><span class="label">지역</span></div>
+  </div>
+  <div id="summary" class="sub"></div>
+  <div class="table-wrap">
+    <table id="tbl" hidden>
+      <thead><tr><th>가게</th><th>종류</th><th>거리</th><th>소요시간</th><th>리뷰·평점·영업시간</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p style="text-align:center"><button type="button" id="more" hidden>더 보기</button></p>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+let map = null, markers = [], lastData = null;
+
+async function loadConfig() {
+  const cfg = await (await fetch("/api/config")).json();
+  const labels = { kakao: "카카오 로컬", tmap: "TMAP 도보", odsay: "ODsay 정확한 경로", subway: "지하철망(1~8호선)" };
+  $("#sources").innerHTML = Object.entries(cfg.sources)
+    .map(([k, on]) => `<span class="${on ? "on" : "off"}">${on ? "●" : "○"} ${labels[k]}</span>`).join("");
+  $("#ver").textContent = `v${cfg.version}`;
+  $("#subway-banner").hidden = cfg.sources.subway || !cfg.sources.kakao;
+  if (!cfg.sources.kakao) openSettings();  // 처음 실행: 필수 키부터 입력받는다
+  checkUpdate();
+  if (cfg.kakao_js_key) {
+    const s = document.createElement("script");
+    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(cfg.kakao_js_key)}&autoload=false`;
+    s.onload = () => kakao.maps.load(() => { $("#map").style.display = "block"; map = new kakao.maps.Map($("#map"), { center: new kakao.maps.LatLng(37.5665, 126.978), level: 5 }); });
+    document.head.appendChild(s);
+  }
+}
+
+function travelCell(p, mode) {
+  if (mode === "walk") {
+    return `도보 ${p.walk.minutes}분${p.walk.estimated ? ' <span class="est">(추정)</span>' : ""}`;
+  }
+  const t = p.transit;
+  const head = t && t.summary
+    ? `약 ${t.minutes}분 <span class="est">(추정)</span><div class="sub">${esc(t.summary)}</div>`
+    : `도보 약 ${p.walk.minutes}분 <span class="est">(걷는 게 빠름)</span>`;
+  return `${head}<div class="sub"><button type="button" class="route-btn" data-id="${esc(p.id)}">정확한 경로</button></div><div class="route-out sub" id="route-${esc(p.id)}"></div>`;
+}
+
+async function showExactRoute(btn) {
+  const p = lastData.items.find((x) => x.id === btn.dataset.id);
+  const out = document.getElementById(`route-${p.id}`);
+  btn.disabled = true; out.textContent = "조회 중…";
+  const q = new URLSearchParams({ from_lng: lastData.center.lng, from_lat: lastData.center.lat, to_lng: p.lng, to_lat: p.lat });
+  try {
+    const res = await fetch(`/api/route/transit?${q}`);
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.detail || res.statusText);
+    out.innerHTML = r.too_close
+      ? "700m 이내라 대중교통 경로가 없습니다. 걸어가세요."
+      : `<b>${r.minutes}분</b> · 환승 ${r.transfers}회${r.fare ? ` · ${r.fare.toLocaleString()}원` : ""}<br>${r.legs.map(esc).join(" → ")}`;
+  } catch (err) {
+    out.innerHTML = `<span class="closed">${esc(err.message)}</span>`;
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".route-btn");
+  if (btn) showExactRoute(btn);
+});
+
+function render(data, append = false) {
+  if (append) {
+    lastData.items = lastData.items.concat(data.items);
+  } else {
+    lastData = data;
+    $("#tbl tbody").innerHTML = "";
+    markers.forEach((m) => m.setMap(null));
+    markers = [];
+  }
+  const shown = lastData.items.length;
+  $("#notes").innerHTML = data.notes.map((n) => `<li>${esc(n)}</li>`).join("");
+  const filtered = data.count < data.total ? ` (전체 ${data.total.toLocaleString()}곳 중 필터 결과 ${data.count.toLocaleString()}곳)` : ` · ${data.total.toLocaleString()}곳`;
+  $("#summary").textContent = `기준: ${data.center.name} · ${data.mode === "walk" ? "도보" : "대중교통"} ${data.minutes}분 이내${filtered} · ${shown.toLocaleString()}곳 표시`;
+  $("#more").hidden = shown >= data.count;
+  if (!append) renderFacets(data.facets);
+  $("#tbl").hidden = false;
+  $("#tbl tbody").insertAdjacentHTML("beforeend", data.items.map((p) => `
+    <tr>
+      <td><a href="${esc(p.kakao_url)}" target="_blank" rel="noopener">${esc(p.name)}</a>
+          <div class="sub">${esc(p.road_address || p.address)}${p.phone ? " · " + esc(p.phone) : ""}</div>
+          <span class="area-tag">${esc(p.area)}</span></td>
+      <td>${esc(p.category_group)}<div class="sub">${esc(p.category)}</div></td>
+      <td class="num">${p.distance_m.toLocaleString()}m</td>
+      <td class="num">${travelCell(p, data.mode)}</td>
+      <td><a href="${esc(p.kakao_url)}" target="_blank" rel="noopener">카카오맵에서 보기</a></td>
+    </tr>`).join(""));
+
+  if (map) {
+    const center = new kakao.maps.LatLng(data.center.lat, data.center.lng);
+    const bounds = new kakao.maps.LatLngBounds();
+    bounds.extend(center);
+    markers = markers.concat(data.items.map((p) => new kakao.maps.Marker({ map, position: new kakao.maps.LatLng(p.lat, p.lng), title: p.name })));
+    lastData.items.forEach((p) => bounds.extend(new kakao.maps.LatLng(p.lat, p.lng)));
+    if (lastData.items.length) map.setBounds(bounds); else map.setCenter(center);
+  }
+}
+
+let lastParams = null;
+const selected = { category: new Set(), area: new Set() };
+let showAllAreas = false;
+const AREA_PREVIEW = 12;
+
+function chip(kind, f) {
+  const on = selected[kind].has(f.name);
+  const extra = kind === "area" && f.min_minutes !== undefined ? ` · ${f.min_minutes}분~` : "";
+  return `<button type="button" class="chip${on ? " on" : ""}" data-kind="${kind}" data-name="${esc(f.name)}">${esc(f.name)}<span class="n">${f.count.toLocaleString()}${extra}</span></button>`;
+}
+
+function renderFacets(facets) {
+  $("#filters").hidden = false;
+  // 선택했지만 지금 집계에 0건인 항목도 해제할 수 있게 남겨 둔다.
+  const withSelected = (list, kind) => list.concat([...selected[kind]].filter((n) => !list.some((f) => f.name === n)).map((n) => ({ name: n, count: 0 })));
+  const cats = withSelected(facets.categories, "category");
+  $("#cat-chips").innerHTML = '<span class="label">종류</span>' + cats.map((f) => chip("category", f)).join("");
+  const areas = withSelected(facets.areas, "area");
+  const visible = showAllAreas ? areas : areas.filter((f, i) => i < AREA_PREVIEW || selected.area.has(f.name));
+  const toggle = areas.length > AREA_PREVIEW
+    ? `<button type="button" class="chip link" id="toggle-areas">${showAllAreas ? "접기" : `지역 ${areas.length}곳 모두 보기`}</button>` : "";
+  $("#area-chips").innerHTML = '<span class="label">지역</span>' + visible.map((f) => chip("area", f)).join("") + toggle;
+}
+
+function filteredParams() {
+  const params = new URLSearchParams(lastParams);
+  params.set("sort", $("#sort").value);
+  if (selected.category.size) params.set("category", [...selected.category].join(","));
+  if (selected.area.size) params.set("area", [...selected.area].join(","));
+  return params;
+}
+
+$("#filters").addEventListener("click", (e) => {
+  if (e.target.closest("#toggle-areas")) {
+    showAllAreas = !showAllAreas;
+    renderFacets(lastData.facets);
+    return;
+  }
+  if (e.target.closest("#reset-filters")) {
+    selected.category.clear(); selected.area.clear(); $("#sort").value = "spread";
+    runSearch(filteredParams(), false);
+    return;
+  }
+  const c = e.target.closest(".chip[data-kind]");
+  if (!c) return;
+  const set = selected[c.dataset.kind];
+  set.has(c.dataset.name) ? set.delete(c.dataset.name) : set.add(c.dataset.name);
+  runSearch(filteredParams(), false);
+});
+
+$("#sort").addEventListener("change", () => runSearch(filteredParams(), false));
+
+async function runSearch(params, append) {
+  const btn = append ? $("#more") : $("#go");
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = append ? "불러오는 중…" : "검색 중…";
+  try {
+    const res = await fetch(`/api/search?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    render(data, append);
+  } catch (err) {
+    $("#notes").innerHTML = `<li class="closed">${esc(err.message)}</li>`;
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+$("#f").addEventListener("submit", (e) => {
+  e.preventDefault();
+  // 새 위치·조건으로 검색하면 이전 필터는 의미가 없으므로 초기화한다.
+  lastParams = new URLSearchParams(new FormData(e.target));
+  selected.category.clear(); selected.area.clear(); showAllAreas = false;
+  runSearch(filteredParams(), false);
+});
+
+$("#more").addEventListener("click", () => {
+  const params = filteredParams();
+  params.set("offset", lastData.items.length);
+  runSearch(params, true);
+});
+
+async function openSettings() {
+  const s = await (await fetch("/api/settings")).json();
+  $("#user-dir").textContent = s.user_dir;
+  for (const [name, k] of Object.entries(s.keys)) {
+    $(`[data-hint="${name}"]`).textContent = k.set ? `저장됨 (${k.hint})` : "아직 입력하지 않음";
+    $(`#settings-form [name="${name}"]`).value = "";
+  }
+  if (!$("#settings").open) $("#settings").showModal();
+}
+
+$("#open-settings").addEventListener("click", openSettings);
+$("#close-settings").addEventListener("click", () => $("#settings").close());
+$("#save-settings").addEventListener("click", async () => {
+  const body = Object.fromEntries(new FormData($("#settings-form")));
+  const res = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) { alert("저장하지 못했습니다."); return; }
+  location.reload();  // 지도 스크립트와 연결 상태를 새 키로 다시 불러온다
+});
+
+$("#build-subway").addEventListener("click", async () => {
+  const btn = $("#build-subway");
+  btn.disabled = true; $("#build-status").textContent = "역 좌표를 찾는 중… (약 1분)";
+  try {
+    const res = await fetch("/api/subway/build", { method: "POST" });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.detail || res.statusText);
+    $("#build-status").textContent = `완료: 역 ${r.stations}개, 구간 ${r.segments}개${r.missing.length ? ` (좌표 못 찾은 역: ${r.missing.join(", ")})` : ""}`;
+    setTimeout(() => location.reload(), 1200);
+  } catch (err) {
+    $("#build-status").innerHTML = `<span class="closed">${esc(err.message)}</span>`;
+    btn.disabled = false;
+  }
+});
+
+async function checkUpdate() {
+  try {
+    const v = await (await fetch("/api/version")).json();
+    if (v.latest && v.latest.newer) {
+      $("#update-banner").innerHTML = `새 버전 <b>v${esc(v.latest.version)}</b>이 나왔습니다 (현재 v${esc(v.current)}). <a href="${esc(v.latest.url)}" target="_blank" rel="noopener">내려받기</a> · 새 폴더에 압축을 풀고 <code>userdata</code> 폴더를 옮기면 키와 캐시가 유지됩니다.`;
+      $("#update-banner").hidden = false;
+    }
+  } catch { /* 오프라인이면 조용히 넘어간다 */ }
+}
+
+$("#sort").value = "spread";  // 새로고침 시 브라우저가 이전 선택값을 복원하지 않도록
+loadConfig();
+</script>
+</body>
+</html>

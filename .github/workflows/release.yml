@@ -1,0 +1,42 @@
+# 태그(v*)를 푸시하면 Windows 포터블 zip 을 빌드해서 GitHub Release 에 올린다.
+#   git tag v0.1.0 && git push origin v0.1.0
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 태그와 app/version.py 버전이 같은지 확인
+        shell: pwsh
+        run: |
+          $v = python -c "from app.version import VERSION; print(VERSION)"
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "app/version.py 의 VERSION($v)이 태그(${{ github.ref_name }})와 다릅니다." }
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt -r requirements-build.txt
+
+      - name: 빌드
+        run: pyinstaller --noconfirm matjip-finder.spec
+
+      - name: zip 만들기
+        shell: pwsh
+        run: Compress-Archive -Path dist/matjip-finder -DestinationPath "matjip-finder-${{ github.ref_name }}-win64.zip"
+
+      - name: Release 에 올리기
+        uses: softprops/action-gh-release@v2
+        with:
+          files: matjip-finder-${{ github.ref_name }}-win64.zip
+          generate_release_notes: true

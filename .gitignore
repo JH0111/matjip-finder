@@ -1,0 +1,16 @@
+# API 키 · 사용자 데이터 (절대 커밋하지 않음)
+.env
+userdata/
+.cache/
+*.log
+
+# 지하철 데이터: 공공데이터 원본 CSV 만 저장소에 넣고, 카카오 좌표로 만든 그래프는 각자 생성
+data/*
+!data/seoul_metro_interstation.csv
+
+# 빌드 산출물
+build/
+dist/
+dist-build/
+__pycache__/
+*.pyc
