@@ -22,7 +22,9 @@ jobs:
       - name: 태그와 app/version.py 버전이 같은지 확인
         shell: pwsh
         run: |
-          $v = python -c "from app.version import VERSION; print(VERSION)"
+          # 의존성 설치 전이라 import 하지 않고 파일에서 직접 읽는다 (version.py 는 httpx 를 쓴다).
+          $m = Select-String -Path app/version.py -Pattern '^VERSION = "([^"]+)"'
+          $v = $m.Matches[0].Groups[1].Value
           if ("v$v" -ne "${{ github.ref_name }}") { throw "app/version.py 의 VERSION($v)이 태그(${{ github.ref_name }})와 다릅니다." }
 
       - name: 의존성 설치

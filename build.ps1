@@ -11,7 +11,7 @@ $py = "$envDir\python.exe"
 $env:PATH = "$envDir;$envDir\Library\bin;$envDir\DLLs;$env:PATH"
 
 Set-Location $PSScriptRoot
-$version = (& $py -c "from app.version import VERSION; print(VERSION)").Trim()
+$version = (Select-String -Path app\version.py -Pattern '^VERSION = "([^"]+)"').Matches[0].Groups[1].Value
 
 & $py -m PyInstaller --noconfirm --log-level WARN --distpath "$OutDir\dist" --workpath "$OutDir\work" matjip-finder.spec 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller 실패 (종료 코드 $LASTEXITCODE)" }
