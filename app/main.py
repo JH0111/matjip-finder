@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, subway, version
+from . import config, subway, updater, version
 from .clients import kakao, odsay
 from .search import search
 
@@ -72,7 +72,26 @@ async def build_subway():
 
 @app.get("/api/version")
 async def get_version():
-    return {"current": version.VERSION, "latest": await version.latest_release()}
+    return {
+        "current": version.VERSION,
+        "latest": await version.latest_release(),
+        "can_auto_update": updater.available(),
+    }
+
+
+@app.post("/api/update")
+async def run_update():
+    """새 버전 zip 을 받아 준비하고, 응답을 보낸 뒤 앱을 종료한다. 교체와 재실행은 도우미 스크립트가 한다."""
+    latest = await version.latest_release(force=True)
+    if not latest or not latest["newer"]:
+        raise HTTPException(status_code=400, detail="이미 최신 버전입니다.")
+    try:
+        await updater.prepare_and_launch(latest["asset_url"])
+    except updater.UpdateError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if updater.request_exit:
+        updater.request_exit()
+    return {"version": latest["version"]}
 
 
 @app.get("/api/search")

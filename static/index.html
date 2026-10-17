@@ -336,10 +336,29 @@ async function checkUpdate() {
   try {
     const v = await (await fetch("/api/version")).json();
     if (v.latest && v.latest.newer) {
-      $("#update-banner").innerHTML = `새 버전 <b>v${esc(v.latest.version)}</b>이 나왔습니다 (현재 v${esc(v.current)}). <a href="${esc(v.latest.url)}" target="_blank" rel="noopener">내려받기</a> · 새 폴더에 압축을 풀고 <code>userdata</code> 폴더를 옮기면 키와 캐시가 유지됩니다.`;
+      const head = `새 버전 <b>v${esc(v.latest.version)}</b>이 나왔습니다 (현재 v${esc(v.current)}).`;
+      $("#update-banner").innerHTML = v.can_auto_update && v.latest.asset_url
+        ? `${head} <button type="button" id="do-update">지금 업데이트</button> <span class="sub">API 키와 지하철 노선망(userdata)은 그대로 유지됩니다.</span> <span id="update-status" class="sub"></span>`
+        : `${head} <a href="${esc(v.latest.url)}" target="_blank" rel="noopener">내려받기</a> · 새 폴더에 압축을 풀고 <code>userdata</code> 폴더를 옮기면 키와 캐시가 유지됩니다.`;
       $("#update-banner").hidden = false;
+      $("#do-update")?.addEventListener("click", runUpdate);
     }
   } catch { /* 오프라인이면 조용히 넘어간다 */ }
+}
+
+async function runUpdate() {
+  const btn = $("#do-update");
+  btn.disabled = true;
+  $("#update-status").textContent = "새 버전을 받는 중… (20MB 정도, 잠시 기다려 주세요)";
+  try {
+    const res = await fetch("/api/update", { method: "POST" });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.detail || res.statusText);
+    $("#update-status").textContent = `v${r.version} 설치 중… 프로그램이 잠시 닫혔다가 자동으로 다시 열립니다.`;
+  } catch (err) {
+    $("#update-status").innerHTML = `<span class="closed">${esc(err.message)}</span>`;
+    btn.disabled = false;
+  }
 }
 
 $("#sort").value = "spread";  // 새로고침 시 브라우저가 이전 선택값을 복원하지 않도록

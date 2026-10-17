@@ -1,4 +1,5 @@
 """브라우저 없이 자체 창으로 실행한다: 내부 서버를 백그라운드로 켜고 pywebview 창에 띄운다."""
+import os
 import socket
 import sys
 import threading
@@ -8,7 +9,7 @@ import urllib.request
 import uvicorn
 import webview
 
-from . import config
+from . import config, updater
 from .main import app
 from .version import VERSION
 
@@ -87,6 +88,17 @@ def main():
         else:
             window.load_html(ERROR_HTML)
 
+    def exit_for_update():
+        # 응답이 화면에 도착할 시간을 준 뒤 창을 닫는다. 그래도 안 끝나면 강제로 끝낸다(교체 스크립트가 기다리는 중).
+        def run():
+            time.sleep(1.5)
+            window.destroy()
+            time.sleep(5)
+            os._exit(0)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    updater.request_exit = exit_for_update
     webview.start(open_when_ready)
     server.should_exit = True
 

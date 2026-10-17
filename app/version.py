@@ -3,7 +3,7 @@ import time
 
 import httpx
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 # GitHub 저장소 "소유자/이름". 비워 두면 새 버전 확인을 하지 않는다.
 GITHUB_REPO = "JH0111/matjip-finder"
 
@@ -15,11 +15,15 @@ def _parse(v: str) -> tuple:
     return tuple(int(x) if x.isdigit() else 0 for x in v.lstrip("vV").split("."))
 
 
-async def latest_release() -> dict | None:
-    """{'version', 'url', 'newer'} 또는 확인할 수 없으면 None. 6시간에 한 번만 GitHub에 묻는다."""
+ASSET_SUFFIX = "-win64.zip"
+
+
+async def latest_release(force: bool = False) -> dict | None:
+    """{'version', 'url', 'asset_url', 'newer'} 또는 확인할 수 없으면 None.
+    평소에는 6시간에 한 번만 GitHub에 묻고, force=True 면 바로 다시 묻는다(업데이트 직전)."""
     if not GITHUB_REPO:
         return None
-    if time.time() - _last["at"] < _CHECK_INTERVAL:
+    if not force and time.time() - _last["at"] < _CHECK_INTERVAL:
         return _last["result"]
     result = None
     try:
@@ -31,7 +35,13 @@ async def latest_release() -> dict | None:
         if resp.status_code == 200:
             data = resp.json()
             tag = data.get("tag_name", "")
-            result = {"version": tag.lstrip("vV"), "url": data.get("html_url"), "newer": _parse(tag) > _parse(VERSION)}
+            asset = next((a for a in data.get("assets", []) if a["name"].endswith(ASSET_SUFFIX)), None)
+            result = {
+                "version": tag.lstrip("vV"),
+                "url": data.get("html_url"),
+                "asset_url": asset["browser_download_url"] if asset else None,
+                "newer": _parse(tag) > _parse(VERSION),
+            }
     except httpx.HTTPError:
         result = None
     _last.update(at=time.time(), result=result)
