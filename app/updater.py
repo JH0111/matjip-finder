@@ -87,13 +87,18 @@ async def prepare_and_launch(asset_url: str) -> str:
     script = work / "apply_update.ps1"
     script.write_text(SCRIPT, encoding="utf-8-sig")  # BOM: Windows PowerShell 5.1 이 한글을 바로 읽도록
     log = config.USER_DIR / "update.log"
-    subprocess.Popen(
-        [
-            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-            "-File", str(script),
-            "-AppPid", str(os.getpid()), "-Src", str(new_app), "-Dst", str(config.APP_DIR), "-Log", str(log),
-        ],
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
-        close_fds=True,
-    )
+    args = [
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+        "-File", str(script),
+        "-AppPid", str(os.getpid()), "-Src", str(new_app), "-Dst", str(config.APP_DIR), "-Log", str(log),
+    ]
+    with log.open("a", encoding="utf-8") as f:
+        f.write(f"도우미 실행: {script}\n")
+    # DETACHED_PROCESS 를 쓰면 PowerShell 이 콘솔을 못 얻어 바로 끝나므로, 숨은 콘솔(CREATE_NO_WINDOW)로 띄운다.
+    # 앱이 Job 에 묶여 있으면 앱이 끝날 때 같이 죽지 않도록 Job 에서 떼어 내고, 허용되지 않으면 그냥 띄운다.
+    base_flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen(args, creationflags=base_flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
+    except OSError:
+        subprocess.Popen(args, creationflags=base_flags, close_fds=True)
     return str(new_app)
